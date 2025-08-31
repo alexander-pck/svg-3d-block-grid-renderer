@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1">
+	<title>SVG 3D Block Grid renderer</title>
+	<style>
+		html,body{height:100%;margin:0;background:#111;color:#ddd;font-family:system-ui,Segoe UI,Arial}
+		.wrap{display:flex;gap:16px;padding:16px}
+		.controls{width:320px}
+		label{display:block;margin:8px 0 4px;font-size:13px}
+		input[type=number],input[type=range]{width:100%}
+		svg{background:#000;border-radius:6px;flex:1;box-shadow:0 6px 24px rgba(0,0,0,.6)}
+		.footer{font-size:12px;margin-top:8px;color:#999}
+		.btnRow{margin-top:10px;display:flex;gap:8px}
+	</style>
+	<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+<div class="wrap">
+	<div class="controls">
+		<h3>3D Block Grid</h3>
+		<label>Width (X)</label>
+		<input id="inp-w" type="number" value="4" min="1" max="30">
+		<label>Height (Y)</label>
+		<input id="inp-h" type="number" value="4" min="1" max="30">
+		<label>Depth (Z)</label>
+		<input id="inp-d" type="number" value="3" min="1" max="30">
+		<label>Cube size (px)</label>
+		<input id="inp-size" type="number" value="28" min="4" max="200">
+		<label>Margin (px)</label>
+		<input id="inp-gap" type="number" value="6" min="0" max="100">
+		<label>Theta (deg) — rotate around Y</label>
+		<input id="inp-theta" title="theta" type="range" min="-180" max="180" value="-150">
+		<label>Phi (deg) — rotate around X</label>
+		<input id="inp-phi" title="phi" type="range" min="-90" max="90" value="30">
+		<label>Opacity (faces)</label>
+		<input id="inp-op" title="opacity" type="range" min="0" max="1" step="0.05" value="1">
+		<label>Border color</label>
+		<input id="inp-border" title="border color" type="color" value="#ddd">
+		<label>Max visible slots</label>
+		<input id="inp-max" title="max visible slots" type="number" value="4" min="2" >
+		<div class="btnRow">
+			<button id="btn-render">Render</button>
+			<button id="btn-random">Randomize</button>
+		</div>
+		<div class="footer">Faces are culled when facing away from the camera. Use theta/phi to rotate the scene.</div>
+	</div>
+		<svg id="svg" width="900" height="600" viewBox="0 0 900 600" xmlns="http://www.w3.org/2000/svg"></svg>
+	</div>
+	</body>
+	</html>
+<script>
+// Simple orthographic renderer for a grid of cubes into an SVG.
+
+const svg = document.getElementById('svg');
+const inp = (id)=>document.getElementById(id);
+
+function deg(v){return v*Math.PI/180}
+
+function rad(v){return v*180/Math.PI}
+
+function rotateY(p,th){
+	const c=Math.cos(th), s=Math.sin(th);
+	return {x: p.x*c + p.z*s, y: p.y, z: -p.x*s + p.z*c};
+}
+function rotateX(p,ph){
+	const c=Math.cos(ph), s=Math.sin(ph);
+	return {x: p.x, y: p.y*c - p.z*s, z: p.y*s + p.z*c};
+}
+
+function project(p, scale, center){
+	return {x: center.x + p.x*scale, y: center.y - p.y*scale, z: p.z};
+}
+
+function faceNormal(a,b,c){
+	const ux=b.x-a.x, uy=b.y-a.y, uz=b.z-a.z;
+	const vx=c.x-a.x, vy=c.y-a.y, vz=c.z-a.z;
+	return {
+		x: uy*vz - uz*vy,
+		y: uz*vx - ux*vz,
+		z: ux*vy - uy*vx
+	};
+}
+
+function avgZ(points){ return points.reduce((s,p)=>s+p.z,0)/points.length }
+
+function render(){
+	const W = +inp('inp-w').value;
+	const H = +inp('inp-h').value;
+	const D = +inp('inp-d').value;
+	const size = +inp('inp-size').value;
+	const gap = +inp('inp-gap').value;
+	const theta = deg(+inp('inp-theta').value);
+	const phi = deg(+inp('inp-phi').value);
+	const op = +inp('inp-op').value;
+	// configurable maximum visible slots per axis
+	const maxVis = Math.max(2, Math.floor(+inp('inp-max').value || 4));
+	// const maxVis = Math.min(30, maxVisRaw);
+
+	// build cube grid world coordinates (x,y,z)
+	// If a dimension > 4 we display 4 visual slots with the 3rd (index 2) replaced by marker —
+	// so 5 or 6 look the same as 5.
+	const spacing = size + gap;
+	const visW = W > maxVis ? maxVis : W;
+	const visH = H > maxVis ? maxVis : H;
+	const visD = D > maxVis ? maxVis : D;
+	const cubes = [];
+	function createCube(xi, yi, zi) {
+		const cx = (xi - (visW-1)/2) * spacing;
+		const cy = (yi - (visH-1)/2) * spacing;
+		const cz = (zi - (visD-1)/2) * spacing;
+		return {cx, cy, cz, xi, yi, zi};
+	}
+	for(let xi=0; xi<visW; xi++) for(let yi=0; yi<visH; yi++) for(let zi=0; zi<visD; zi++){
+		cubes.push(createCube(xi, yi, zi));
+	}
+
+
+	// rotation and projection settings
+	const center = {x: svg.viewBox.baseVal.width/2, y: svg.viewBox.baseVal.height/2};
+	const scale = 1; // world units are pixels already
+
+	const viewDir = {x:0,y:0, z:1}; // camera looking along +z
+
+	// prepare faces list
+	const faces = [];
+	const xMarker = W>maxVis, yMarker = H>maxVis, zMarker = D>maxVis;
+
+	for(const c of cubes){
+		// if this cube should be replaced by a "●●" marker along a direction, create marker and skip faces
+		let markerAxis = {x:null,y:null,z:null};
+		if(xMarker && c.xi === 1) markerAxis.x = true;
+		if(yMarker && c.yi === 1) markerAxis.y = true;
+		if(zMarker && c.zi === 1) markerAxis.z = true;
+		if(markerAxis.x || markerAxis.y || markerAxis.z){
+			// replace cube with two small dots along the chosen axis
+			const s = size*0.15;
+			let offsets = [];
+			if (!(markerAxis.x && markerAxis.y && markerAxis.z) && !(visW == 1 || visH == 1 || visD == 1)) {
+				function isOnEdge(x, y, z, w, h, d) {
+					const on = [x === 0 || x === w,y === 0 || y === h,z === 0 || z === d].filter(Boolean).length;
+					return on === 2 && x >= 0 && x <= w && y >= 0 && y <= h && z >= 0 && z <= d;
+					}
+				if(markerAxis.x && !isOnEdge(c.xi,c.yi,c.zi, visW-1, visH-1, visD-1)) continue; // only draw marker on edges
+				if(markerAxis.y && !isOnEdge(c.xi,c.yi,c.zi, visW-1, visH-1, visD-1)) continue; // only draw marker on edges
+				if(markerAxis.z && !isOnEdge(c.xi,c.yi,c.zi, visW-1, visH-1, visD-1)) continue; // only draw marker on edges
+			}
+			if(markerAxis.x) offsets = [{x:-s,y:0,z:0},{x:s,y:0,z:0}];
+			if(markerAxis.y) offsets = [{x:0,y:-s,z:0},{x:0,y:s,z:0}];
+			if(markerAxis.z) offsets = [{x:0,y:0,z:-s},{x:0,y:0,z:s}];
+            if(markerAxis.x && markerAxis.y) offsets = [{x:-s,y:-s,z:0},{x:s,y:s,z:0}];
+            if(markerAxis.x && markerAxis.z) offsets = [{x:-s,y:0,z:-s},{x:s,y:0,z:s}];
+            if(markerAxis.y && markerAxis.z) offsets = [{x:0,y:-s,z:-s},{x:0,y:s,z:s}];
+            if(markerAxis.x && markerAxis.y && markerAxis.z) offsets = [{x:-s,y:-s,z:-s},{x:s,y:s,z:s}];
+			// compute rotated 3D positions and projected 2D positions
+			const pts3 = offsets.map(o=> rotateX(rotateY({x:c.cx+o.x,y:c.cy+o.y,z:c.cz+o.z}, theta), phi));
+			const proj = pts3.map(p=>project(p,1,center));
+			// compute depth for sorting
+			const zAvg = avgZ(pts3);
+			faces.push({type:'marker', proj, z: zAvg,  radius: Math.max(2, size*0.12)});
+			continue; // skip faces for this cube
+		}
+		const h = size/2;
+		const corners = [
+			{x: c.cx - h, y: c.cy - h, z: c.cz - h}, // 0
+			{x: c.cx + h, y: c.cy - h, z: c.cz - h}, // 1
+			{x: c.cx + h, y: c.cy + h, z: c.cz - h}, // 2
+			{x: c.cx - h, y: c.cy + h, z: c.cz - h}, // 3
+			{x: c.cx - h, y: c.cy - h, z: c.cz + h}, // 4
+			{x: c.cx + h, y: c.cy - h, z: c.cz + h}, // 5
+			{x: c.cx + h, y: c.cy + h, z: c.cz + h}, // 6
+			{x: c.cx - h, y: c.cy + h, z: c.cz + h}  // 7
+		];
+
+		// rotate corners
+		const rcorners = corners.map(p=> rotateX(rotateY(p,theta), phi));
+
+		// faces as indices and colors (top, left, right, front, back, bottom) but we'll render only 3 visible faces per cube typically
+        const faceDefs = [
+            {idx:[3,2,6,7], color:'#e0e7ef', opacity:op*0.75},   // top (y+), soft blue-white
+            {idx:[0,4,7,3], color:'#dbeafe', opacity:op*0.75},   // left (x-), light blue
+            {idx:[1,5,6,2], color:'#f1f5f9', opacity:op*0.75},  // right (x+), cool white
+            {idx:[0,1,2,3], color:'#f3f4f6', opacity:op*0.75},  // front (z-), neutral white
+            {idx:[4,5,6,7], color:'#e5e7eb', opacity:op*0.75},   // back (z+), grayish white
+            {idx:[0,1,5,4], color:'#cbd5e1', opacity:op*0.75}   // bottom (y-), blue-gray
+        ];
+
+			// Emit all faces for this cube (render all 6 faces). Keep normal orientation consistent.
+			for(const fd of faceDefs){
+				const pts3 = fd.idx.map(i=>rcorners[i]);
+				let n = faceNormal(pts3[0], pts3[1], pts3[2]);
+
+				// compute face centroid
+				const centroid = pts3.reduce((acc,p)=>({x:acc.x+p.x,y:acc.y+p.y,z:acc.z+p.z}),{x:0,y:0,z:0});
+				centroid.x /= pts3.length; centroid.y /= pts3.length; centroid.z /= pts3.length;
+
+				// ensure normal points outward from cube center (just for consistency)
+				const toOutside = {x: centroid.x - c.cx, y: centroid.y - c.cy, z: centroid.z - c.cz};
+				const dotCenter = n.x*toOutside.x + n.y*toOutside.y + n.z*toOutside.z;
+				if(dotCenter < 0){ n = {x:-n.x, y:-n.y, z:-n.z}; }
+
+				const pts2 = pts3.map(p=>project(p,1,center));
+				const colorOffset = 100
+				const mapXtoRGB = (x) => { return Math.floor(255 - colorOffset + (255-colorOffset) * (x / (W))); }
+				const mapYtoRGB = (y) => { return Math.floor(255 - colorOffset + (255-colorOffset) * (y / (H))); }
+				const mapZtoRGB = (z) => { return Math.floor(255 - colorOffset + (255-colorOffset) * (z / (D))); }
+				const color = `rgb(${mapXtoRGB(c.xi)}, ${mapYtoRGB(c.yi)}, ${mapZtoRGB(c.zi)})`;
+				faces.push({pts3, pts2, z: avgZ(pts3), color: color, opacity: fd.opacity});
+			}
+	}
+
+	// painter's algorithm: sort by depth (far -> near). Our camera looks along +z, so smaller z is farther.
+	faces.sort((a,b)=> a.z - b.z);
+
+	// clear svg
+	while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+	// optional grid helper axes
+	const gAxes = document.createElementNS('http://www.w3.org/2000/svg','g');
+	svg.appendChild(gAxes);
+
+		// draw faces and markers in depth-sorted order
+		const borderColor = document.getElementById('inp-border').value;
+		for(const f of faces){
+			if(f.type === 'marker'){
+				// draw two white dots (as requested)
+				for(const p of f.proj){
+					const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+					c.setAttribute('cx', p.x);
+					c.setAttribute('cy', p.y);
+					c.setAttribute('r', f.radius);
+					c.setAttribute('fill', '#ffffff');
+					c.setAttribute('fill-opacity', '1');
+					svg.appendChild(c);
+				}
+			} else {
+				const poly = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+				poly.setAttribute('points', f.pts2.map(p=>`${p.x},${p.y}`).join(' '));
+				poly.setAttribute('fill', f.color);
+				poly.setAttribute('fill-opacity', f.opacity);
+				poly.setAttribute('stroke', borderColor);
+				poly.setAttribute('stroke-opacity', '0.12');
+				poly.setAttribute('stroke-width', '3');
+				svg.appendChild(poly);
+			}
+		}
+
+	// draw a screen-space bracket that indicates the overall height (number of layers H)
+	// The bracket does not rotate with theta (it's drawn in SVG screen coords),
+	// but is placed on the visually outer side of the grid (left or right) based on projected bounds.
+	(function drawHeightBracket(){
+		const Hreal = H; // show actual height number
+		if(visH <= 0) return;
+		// align bracket with the visually rightmost drawn cube: find cube with max projected X
+		const projMap = cubes.map(c=>({cube:c, proj: project( rotateX( rotateY({x:c.cx,y:c.cy,z:c.cz}, theta), phi), 1, center)}));
+		let ref = projMap.reduce((a,b)=> b.proj.x > a.proj.x ? b : a, projMap[0]);
+		const refXi = ref.cube.xi, refZi = ref.cube.zi;
+		// find top/bottom centers in the same column (refXi, refZi)
+		let topCenter = null, bottomCenter = null;
+		for(const p of projMap){
+			if(p.cube.xi === refXi && p.cube.zi === refZi && p.cube.yi === visH-1) topCenter = p.proj;
+			if(p.cube.xi === refXi && p.cube.zi === refZi && p.cube.yi === 0) bottomCenter = p.proj;
+		}
+		// fallback to min/max Y among all projected centers
+		const allCenters = projMap.map(p=>p.proj);
+		const minX = Math.min(...allCenters.map(p=>p.x));
+		const maxX = Math.max(...allCenters.map(p=>p.x));
+		if(!topCenter) topCenter = allCenters.reduce((a,b)=> a.y<b.y?a:b);
+		if(!bottomCenter) bottomCenter = allCenters.reduce((a,b)=> a.y>b.y?a:b);
+		const topY = topCenter.y - Math.max(6, size*0.15);
+		const bottomY = bottomCenter.y + Math.max(6, size*0.15);
+		// decide which side is outer based on the reference cube's projected X relative to svg center
+		const sideRight = (ref.proj.x >= center.x);
+		const offset = 20+Math.max(12, size*0.6);
+		const x = sideRight ? (ref.proj.x + offset) : (ref.proj.x - offset);
+		const cap = Math.max(8, size*0.3);
+		// vertical line
+		const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+		const dir = sideRight ? 1 : -1;
+		const d = `M ${x+dir*cap} ${topY} L ${x} ${topY} L ${x} ${bottomY} L ${x+dir*cap} ${bottomY}`;
+		line.setAttribute('d', d);
+		line.setAttribute('stroke', '#ddd');
+		line.setAttribute('stroke-width', Math.max(2, size*0.06));
+		line.setAttribute('fill', 'none');
+		line.setAttribute('stroke-linecap','round');
+		svg.appendChild(line);
+		// label with height number; place between top and bottom, slightly offset outward
+		const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+		txt.setAttribute('x', x + dir*(cap+8));
+		txt.setAttribute('y', (topY + bottomY)/2 + 4); // small vertical offset for centering
+		txt.setAttribute('fill', '#ddd');
+		txt.setAttribute('font-size', Math.max(12, size*0.35));
+		txt.setAttribute('font-family', 'system-ui,Segoe UI,Arial');
+		txt.setAttribute('text-anchor', sideRight ? 'start' : 'end');
+		txt.textContent = String(Hreal);
+		svg.appendChild(txt);
+	})();
+
+	// draw a screen-space bracket that indicates the overall depth (number of layers D)
+	// Similar to width bracket but runs along the depth (Z) axis and is placed on the visually outer side
+	(function drawDepthBracket(){
+		const Dreal = D;
+		if(visD <= 0) return;
+		// reuse direction logic from width bracket
+		const thetadir = rad(theta) >= 0 ? 1 : -1;
+		const phidir = (rad(phi) >= 0) ? 1 : -1;
+		const dir = thetadir * phidir;
+		const offset = 20+Math.max(12, size*0.6);
+		// pick a representative X and Y layer to sample the front/back extremes
+		const xLayer = (thetadir == -1) ? visW-1 : 0; // choose which column to sample based on theta
+		const yLayer = (rad(phi) >= 0) ? 0 : visH-1; // choose top/bottom layer based on phi
+		const p1 = createCube(xLayer, yLayer, 0);
+		const point1 = project( rotateX( rotateY({x:p1.cx,y:p1.cy,z:p1.cz}, theta), phi), 1, center);
+		const p2 = createCube(xLayer, yLayer, visD-1);
+		const point2 = project( rotateX( rotateY({x:p2.cx,y:p2.cy,z:p2.cz}, theta), phi), 1, center);
+		const leftX = point1.x, leftY = point1.y;
+		const rightX = point2.x, rightY = point2.y;
+
+		// direction vector along depth in screen space
+		let dx = rightX - leftX, dy = rightY - leftY;
+		let len = Math.hypot(dx,dy) || 1;
+		const ux = dx/len, uy = dy/len;
+		// perpendicular unit vector
+		const px = -uy, py = ux;
+
+		// offset bracket outward along perpendicular
+		const baseLeftX = leftX + px*dir*offset , baseLeftY = leftY + py*dir*offset ;
+		const baseRightX = rightX + px*dir*offset , baseRightY = rightY + py*dir*offset ;
+		const cap = Math.max(8, size*0.3);
+		// build path oriented along (ux,uy) with caps along perpendicular
+		const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+		const d = `M ${baseLeftX + px*dir*cap} ${baseLeftY + py*dir*cap} L ${baseLeftX} ${baseLeftY} L ${baseRightX} ${baseRightY} L ${baseRightX + px*dir*cap} ${baseRightY + py*dir*cap}`;
+		line.setAttribute('d', d);
+		line.setAttribute('stroke', '#ddd');
+		line.setAttribute('stroke-width', Math.max(2, size*0.06));
+		line.setAttribute('fill', 'none');
+		line.setAttribute('stroke-linecap','round');
+		svg.appendChild(line);
+		// label with depth number; place at midpoint and offset outward along perpendicular
+		const midX = (baseLeftX + baseRightX)/2, midY = (baseLeftY + baseRightY)/2;
+		const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+		txt.setAttribute('x', midX + px*dir*(cap+8));
+		txt.setAttribute('y', midY + py*dir*(cap+8));
+		txt.setAttribute('fill', '#ddd');
+		txt.setAttribute('font-size', Math.max(12, size*0.35));
+		txt.setAttribute('font-family', 'system-ui,Segoe UI,Arial');
+		txt.setAttribute('text-anchor', 'middle');
+		txt.textContent = String(Dreal);
+		svg.appendChild(txt);
+	})();
+
+	// draw a screen-space bracket that indicates the overall width (number of columns W)
+	// Similar to height bracket but horizontal and placed on the visually outer side (top or bottom)
+	(function drawWidthBracket(){
+		const Wreal = W;
+		if(visW <= 0) return;
+		const sideBottom = rad(phi) <= -45 || (rad(phi) > 0 && rad(phi) < 45);  // selecting x - x - over a range of 360
+		const thetadir = Math.abs(rad(theta)) >= 90 ? -1 : 1;
+		const phidir = (rad(phi) >= 0) ? 1 : -1;
+		const dir = thetadir * phidir;
+		const offset = 20+Math.max(12, size*0.6);
+		let leftX, leftY, rightX, rightY;
+
+
+		const yLayer = (rad(phi) >= 0) ? 0 : visH-1;
+		const zLayer = (thetadir == -1) ? 0 : visD-1;
+		const p1 = createCube(0,  yLayer, zLayer);
+		const point1 = project( rotateX( rotateY({x:p1.cx,y:p1.cy,z:p1.cz}, theta), phi), 1, center);
+		const p2 = createCube(visW-1, yLayer, zLayer);
+		const point2 = project( rotateX( rotateY({x:p2.cx,y:p2.cy,z:p2.cz}, theta), phi), 1, center);
+		leftX = point1.x; leftY = point1.y;
+		rightX = point2.x; rightY = point2.y;
+
+		// direction vector along width in screen space
+		let dx = rightX - leftX, dy = rightY - leftY;
+		let len = Math.hypot(dx,dy) || 1;
+		const ux = dx/len, uy = dy/len;
+		// perpendicular unit vector
+		const px = -uy, py = ux;
+
+		// offset bracket outward along perpendicular
+		const baseLeftX = leftX +px*dir*offset , baseLeftY = leftY +py*dir*offset ;
+		const baseRightX = rightX +px*dir*offset , baseRightY = rightY +py*dir*offset ;
+		const cap = Math.max(8, size*0.3);
+		// build path oriented along (ux,uy) with caps along perpendicular
+		const line = document.createElementNS('http://www.w3.org/2000/svg','path');
+		const d = `M ${baseLeftX + px*dir*cap} ${baseLeftY + py*dir*cap} L ${baseLeftX} ${baseLeftY} L ${baseRightX} ${baseRightY} L ${baseRightX + px*dir*cap} ${baseRightY + py*dir*cap}`;
+		line.setAttribute('d', d);
+		line.setAttribute('stroke', '#ddd');
+		line.setAttribute('stroke-width', Math.max(2, size*0.06));
+		line.setAttribute('fill', 'none');
+		line.setAttribute('stroke-linecap','round');
+		svg.appendChild(line);
+		// label with width number; place at midpoint and offset outward along perpendicular
+		const midX = (baseLeftX + baseRightX)/2, midY = (baseLeftY + baseRightY)/2;
+		const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+		txt.setAttribute('x', midX + px*dir*(cap+8));
+		txt.setAttribute('y', midY + py*dir*(cap+8));
+		txt.setAttribute('fill', '#ddd');
+		txt.setAttribute('font-size', Math.max(12, size*0.35));
+		txt.setAttribute('font-family', 'system-ui,Segoe UI,Arial');
+		txt.setAttribute('text-anchor', 'middle');
+		txt.textContent = String(Wreal);
+		svg.appendChild(txt);
+	})();
+
+}
+
+document.getElementById('btn-render').addEventListener('click', render);
+document.getElementById('btn-random').addEventListener('click', ()=>{
+	inp('inp-w').value = Math.floor(2+Math.random()*6);
+	inp('inp-h').value = Math.floor(1+Math.random()*5);
+	inp('inp-d').value = Math.floor(2+Math.random()*6);
+	inp('inp-theta').value = (Math.random()*360-180).toFixed(0);
+	inp('inp-phi').value = (Math.random()*180-90).toFixed(0);
+	render();
+});
+
+// live update for sliders and dimension inputs (so bracket updates immediately)
+['inp-theta','inp-phi','inp-op','inp-size','inp-gap','inp-border','inp-max', 'inp-w', 'inp-h', 'inp-d'].forEach(id=>{
+	document.getElementById(id).addEventListener('input', render);
+});
+
+// initial render
+render();
+</script>
