@@ -1,19 +1,20 @@
-3D Block Grid — test.html
+# 3D Block Grid (SVG) — demo
 
-Overview
+Demo: [Replace with hosted demo URL]
 
-This is a tiny orthographic SVG renderer (single file: `test.html`) that visualizes a grid of cubes and draws three screen-space brackets showing the grid dimensions:
-- Height (Y) — vertical bracket
-- Width (X) — horizontal bracket
-- Depth (Z) — newly added depth bracket
+![Screenshot placeholder](./images/ExampleImage.png)
 
-All rendering is done in vanilla JavaScript. The cubes are placed in a simple world coordinate grid, rotated by theta (Y-axis) and phi (X-axis), projected into screen space and drawn as SVG polygons. Brackets are screen-space helpers attached to projected cube centers so they follow the visual outline of the grid.
+A tiny, single-file orthographic SVG renderer (`main.html`) that visualizes a grid of cubes and draws screen-space brackets for the grid dimensions: Height (Y), Width (X) and Depth (Z).
 
-Note on portability
+> Note: this project is intentionally simple and not performance-optimized. It uses naive loops and immediate DOM/SVG updates; for large grids or production use it will be inefficient.
 
-- The project is primarily JavaScript-based and uses only basic DOM/SVG and math logic, so it is straightforward to adapt to React (including React Native SVG solutions), Vue, or other JS frameworks with minor modifications (wrapping rendering logic into components and routing input state through framework state management).
+## Features
 
-Controls (in-page)
+- Interactive controls for Width, Height, Depth, cube size, spacing, rotation (theta/phi), opacity and border color.
+- Screen-space brackets that annotate the visual Width, Height and Depth and follow the projected outline of the grid.
+- Markers for omitted middle slots when a dimension exceeds `Max visible slots`.
+
+## Controls
 
 - Width (X) — number of columns
 - Height (Y) — number of rows / vertical layers
@@ -26,30 +27,43 @@ Controls (in-page)
 - Border color — stroke color for cube faces
 - Max visible slots — maximum visual slots per axis; if a dimension exceeds this the renderer shows markers (two dots) instead of the middle slot.
 
-Visual helpers
+## Visual helpers
 
 - Brackets are drawn in SVG screen coordinates but anchored to projected cube centers so they appear attached to the visible edges of the grid.
 - The width bracket picks a representative Y and Z layer depending on phi/theta to attach to the visually outer column and places the bracket outward along the perpendicular screen vector.
-- The newly added depth bracket samples an X and Y layer (based on theta/phi) and draws a bracket between the front-most (z=0) and back-most (z=visD-1) projected centers, labeling it with the real `D` value.
+- The depth bracket samples an X and Y layer (based on theta/phi) and draws a bracket between the front-most (z=0) and back-most (z=visD-1) projected centers, labeling it with the real `D` value.
 - When a dimension is larger than `Max visible slots` the renderer uses `visW/visH/visD` for visual layout and shows a marker (two dots) in the middle slot to indicate omitted cells.
 
-Implementation notes
+## Implementation notes
 
-- The input degrees for theta/phi are converted to radians internally (functions `deg()` and `rad()` exist). The code uses simple orthographic projection (no perspective).
-- The bracket placement logic uses the sign of theta and phi to decide which side is visually outer; this keeps brackets readable and avoids overlapping with the grid.
-- Colors for cube faces are computed from cube indices as an RGB mix for visual variety.
+- Uses vanilla JavaScript and SVG with a simple orthographic projection (no perspective).
+- Input angles are provided in degrees and converted to radians via `deg()`/`rad()` helpers.
+- The rendering pipeline is immediate: world coords -> rotate -> project -> append SVG elements. This is simple but not optimized for large scenes.
 
-Troubleshooting
+## Portability
 
-- If labels or strokes are hard to see, adjust `Border color` in the controls or increase `font-size` / `stroke-width` via the UI by changing `Cube size`.
-- If a bracket is not where you expect, try changing `Theta`/`Phi` — the bracket chooses sampling axes based on those angles.
+- The code is framework-agnostic and easy to adapt to React, Vue or other frameworks by moving rendering into components and managing input state.
 
-Examples & screenshot
+## Troubleshooting
 
-- Live example: [Insert example URL here] (replace with your hosted `test.html` link)
-- Screenshot: ![Screenshot placeholder](INSERT_SCREENSHOT_URL) (replace with path/URL to the screenshot you'll provide)
+- If labels or strokes are hard to see, adjust `Border color` or increase `Cube size`.
+- If a bracket is not where you expect, try changing `Theta`/`Phi` — bracket anchor selection depends on those angles.
 
-Customizing
+## Customizing
+
+- To change which cube column/row is used to anchor a bracket, edit the bracket IIFEs near the end of `test.html`:
+    - `drawHeightBracket` chooses a reference projected X column.
+    - `drawWidthBracket` chooses a Y/Z layer.
+    - `drawDepthBracket` chooses an X/Y layer.
+
+## Examples
+
+- Live example: replace the demo URL above with your hosted `test.html` link.
+- Replace the screenshot placeholder with a screenshot showing the grid.
+
+## License
+
+Use freely for prototypes and demos.
 
 - To change which cube column/row is used to anchor a bracket, edit the bracket IIFE near the end of `test.html`:
     - `drawHeightBracket` chooses a reference projected X column.
