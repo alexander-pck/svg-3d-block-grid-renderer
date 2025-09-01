@@ -1,6 +1,6 @@
 # 3D Block Grid (SVG) — demo
 
-Demo: [Replace with hosted demo URL]
+Demo: [\[Live Demo\]](https://alexander-pck.github.io/svg-3d-block-grid-renderer/)
 
 ![Screenshot placeholder](./images/ExampleImage.png)
 
@@ -56,20 +56,7 @@ A tiny, single-file orthographic SVG renderer (`main.html`) that visualizes a gr
     - `drawWidthBracket` chooses a Y/Z layer.
     - `drawDepthBracket` chooses an X/Y layer.
 
-## Examples
-
-- Live example: replace the demo URL above with your hosted `test.html` link.
-- Replace the screenshot placeholder with a screenshot showing the grid.
-
-## License
-
-Use freely for prototypes and demos.
-
 - To change which cube column/row is used to anchor a bracket, edit the bracket IIFE near the end of `test.html`:
     - `drawHeightBracket` chooses a reference projected X column.
     - `drawWidthBracket` chooses a Y/Z layer.
     - `drawDepthBracket` chooses an X/Y layer (added in the file).
-
-License
-
-Use freely for prototypes and demos.
