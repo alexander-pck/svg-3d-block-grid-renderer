@@ -6,7 +6,7 @@ Demo: [Replace with hosted demo URL]
 
 A tiny, single-file orthographic SVG renderer (`main.html`) that visualizes a grid of cubes and draws screen-space brackets for the grid dimensions: Height (Y), Width (X) and Depth (Z).
 
-> Note: this project is intentionally simple and not performance-optimized. It uses naive loops and immediate DOM/SVG updates; for large grids or production use it will be inefficient.
+> Note: this project is intentionally simple and not performance-optimized. It uses naive loops and immediate DOM/SVG updates; for large grids or production use it will be inefficient. It is more or less the result of a "vibe coding session" (This word will be untrendy in 2026). 
 
 ## Features
 
